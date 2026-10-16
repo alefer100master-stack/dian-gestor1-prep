@@ -1,0 +1,86 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Descomprimir el proyecto si se subió como ZIP
+        run: |
+          if [ -z "$(find . -name settings.gradle -not -path './.git/*' | head -n 1)" ]; then
+            Z=$(find . -maxdepth 2 -iname '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -n "$Z" ]; then
+              echo "Descomprimiendo $Z"
+              unzip -o -q "$Z" -d proyecto
+            fi
+          fi
+
+      - name: Ubicar el proyecto
+        run: |
+          F=$(find . -name settings.gradle -not -path './.git/*' | head -n 1)
+          if [ -z "$F" ]; then
+            echo "::error::No encontré el proyecto. Sube el archivo dian-gestor1-prep.zip al repositorio (sin descomprimir)."
+            echo "Archivos que hay en el repositorio:"; find . -maxdepth 3 -not -path './.git*' | head -n 60
+            exit 1
+          fi
+          D=$(dirname "$F")
+          echo "PROJ=$D" >> $GITHUB_ENV
+          echo "Proyecto encontrado en: $D"; ls -la "$D"
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Auditar banco de preguntas y lógica
+        working-directory: ${{ env.PROJ }}
+        run: |
+          if [ -f tests/validate-bank.js ]; then node tests/validate-bank.js; fi
+          if [ -f tests/core.test.js ]; then node tests/core.test.js; fi
+
+      - name: Preparar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Preparar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK
+        working-directory: ${{ env.PROJ }}
+        run: gradle --no-daemon assembleDebug assembleRelease
+
+      - name: Renombrar APK
+        run: |
+          mkdir -p dist
+          cp "$PROJ/app/build/outputs/apk/debug/app-debug.apk" dist/Gestor1-DIAN-debug.apk
+          cp "$PROJ/app/build/outputs/apk/release/app-release.apk" dist/Gestor1-DIAN.apk
+          ls -la dist
+
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gestor1-DIAN-apk
+          path: dist/*.apk
+          retention-days: 30
+
+      - name: Publicar en Releases (solo con etiqueta v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Gestor1-DIAN.apk
+          generate_release_notes: true
