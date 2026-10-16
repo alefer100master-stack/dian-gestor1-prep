@@ -1,0 +1,64 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # necesario para publicar el APK en Releases al crear una etiqueta v*
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Preparar Node.js (auditoría del banco y pruebas)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Auditar banco de preguntas
+        run: node tests/validate-bank.js
+
+      - name: Pruebas de la lógica
+        run: node tests/core.test.js
+
+      - name: Preparar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Preparar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK (debug y release)
+        run: gradle --no-daemon assembleDebug assembleRelease
+
+      - name: Renombrar APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Gestor1-DIAN-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk dist/Gestor1-DIAN.apk
+          ls -la dist
+
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gestor1-DIAN-apk
+          path: dist/*.apk
+          retention-days: 30
+
+      - name: Publicar en Releases (solo al crear una etiqueta v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Gestor1-DIAN.apk
+          generate_release_notes: true
